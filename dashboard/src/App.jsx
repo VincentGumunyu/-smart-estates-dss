@@ -19,7 +19,10 @@ import {
     Star,
     Award,
     ArrowUpRight,
-    ArrowDownRight
+    ArrowDownRight,
+    Info,
+    BookOpen,
+    HelpCircle
 } from 'lucide-react';
 import data from './data/data.json';
 import {
@@ -99,16 +102,17 @@ const App = () => {
         };
     }, [tuckshops]);
 
-    // Mock locations for Gweru based on the dataset count
+    // Mock locations for generic center
     const mockMarkers = useMemo(() => {
+        const CENTER = [-19.46, 29.81];
         return Array.from({ length: 100 }, (_, i) => {
             const isGolden = i < 25;
             const hasArrears = !isGolden && Math.random() > 0.6;
             return {
                 id: i,
                 pos: [
-                    GWERU_CENTER[0] + (Math.random() - 0.5) * 0.08,
-                    GWERU_CENTER[1] + (Math.random() - 0.5) * 0.08
+                    CENTER[0] + (Math.random() - 0.5) * 0.08,
+                    CENTER[1] + (Math.random() - 0.5) * 0.08
                 ],
                 status: isGolden ? 'Golden' : (hasArrears ? 'Risk' : 'Standard'),
                 arrears: hasArrears ? Math.floor(Math.random() * 500) : 0
@@ -164,6 +168,7 @@ const App = () => {
         { name: 'Compliance', icon: <CheckCircle2 size={20} /> },
         { name: 'Risk Analysis', icon: <ShieldAlert size={20} /> },
         { name: 'Analytics', icon: <BarChart3 size={20} /> },
+        { name: 'About', icon: <Info size={20} /> },
     ];
 
     const handleAddPayment = () => {
@@ -204,7 +209,7 @@ const App = () => {
                 <header className="header">
                     <div>
                         <h1>{activeTab}</h1>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Smart Estates Management & DSS / Gweru City</p>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Smart Estates Management & DSS / Urban Division</p>
                     </div>
                     <div className="alert-banner">
                         <Bell size={18} />
@@ -564,6 +569,72 @@ const App = () => {
                                         <div className="stat-label">Utilized</div>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'About' && (
+                        <div className="card about-section" style={{ maxWidth: '900px', margin: '0 auto', padding: '3rem' }}>
+                            <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
+                                <div style={{ background: 'rgba(255, 215, 0, 0.1)', width: '80px', height: '80px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+                                    <Award size={40} color="#ffd700" />
+                                </div>
+                                <h2 style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>Smart Estates Management & DSS</h2>
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem' }}>Advanced Decision Support for Urban Estate Portfolios</p>
+                            </div>
+
+                            <div className="about-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '2rem', marginBottom: '4rem' }}>
+                                <div className="about-feature">
+                                    <h4 style={{ color: '#ffd700', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem' }}>
+                                        <MapIcon size={20} /> GIS Spatial Intelligence
+                                    </h4>
+                                    <p style={{ fontSize: '0.95rem', lineHeight: '1.6', color: 'rgba(255,255,255,0.7)' }}>
+                                        Interactive mapping system that provides real-time visualization of property locations, current conditions, and financial health across all urban divisions.
+                                    </p>
+                                </div>
+                                <div className="about-feature">
+                                    <h4 style={{ color: '#ffd700', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem' }}>
+                                        <ShieldAlert size={20} /> Risk Jeopardy Factor
+                                    </h4>
+                                    <p style={{ fontSize: '0.95rem', lineHeight: '1.6', color: 'rgba(255,255,255,0.7)' }}>
+                                        Advanced predictive models that identify high-default areas and susceptible assets, allowing proactive administrative intervention before losses occur.
+                                    </p>
+                                </div>
+                                <div className="about-feature">
+                                    <h4 style={{ color: '#ffd700', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem' }}>
+                                        <BarChart3 size={20} /> Economic Sentiment
+                                    </h4>
+                                    <p style={{ fontSize: '0.95rem', lineHeight: '1.6', color: 'rgba(255,255,255,0.7)' }}>
+                                        Strategic financial tracking that monitors the gap between billed revenue and actual collections to gauge the overall economic pulse of the estate.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <hr style={{ border: 'none', borderTop: '1px solid #333', margin: '2rem 0' }} />
+
+                            <div style={{ padding: '1rem' }}>
+                                <h3 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <BookOpen size={24} color="#4caf50" /> Using the System
+                                </h3>
+                                <ul style={{ listStyle: 'none', padding: 0 }}>
+                                    {[
+                                        "Use the Central Lease Registry to track and filter active vs. expired legal standings.",
+                                        "Record new settlements directly through the 'Market Entry Receipting' form in the Payments module.",
+                                        "Monitor the High-Default Area Map to identify localized clusters of arrears and enforcement priorities.",
+                                        "The 'Compliance' Honor Roll highlights 'model' tenants - use this to inform preferential lease renewals."
+                                    ].map((step, i) => (
+                                        <li key={i} style={{ paddingLeft: '1.5rem', position: 'relative', marginBottom: '1rem', lineHeight: '1.5', color: 'rgba(255,255,255,0.8)' }}>
+                                            <span style={{ position: 'absolute', left: 0, color: '#4caf50' }}>•</span>
+                                            {step}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+
+                            <div style={{ marginTop: '3rem', padding: '1.5rem', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', borderLeft: '4px solid #ffd700' }}>
+                                <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <HelpCircle size={18} /> Need more info? Consult the municipal standard operating procedures (SOP) or contact the Urban Planning Division.
+                                </p>
                             </div>
                         </div>
                     )}
