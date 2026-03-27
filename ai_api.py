@@ -82,13 +82,13 @@ def _openai_key_diagnosis() -> tuple[bool, str, str]:
     refresh_env_and_openai_key()
     k = os.environ.get("OPENAI_API_KEY", "").strip()
     parsed = _parse_env_file()
-    if not env_path.is_file():
+    if not env_path.is_file() and not k:
         return (
             False,
             "no_env_file",
-            f"No .env file here: {env_path}. Create it with one line: OPENAI_API_KEY=sk-...",
+            "No .env and OPENAI_API_KEY not set. Local: add .env next to ai_api.py. Fly.io: fly secrets set OPENAI_API_KEY=sk-...",
         )
-    if "OPENAI_API_KEY" not in parsed and not k:
+    if env_path.is_file() and "OPENAI_API_KEY" not in parsed and not k:
         return (
             False,
             "missing_line",
@@ -169,10 +169,27 @@ class InsightsBody(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
-app = FastAPI(title="Smart Estates AI API")
+# Fly image copies Vite build to ./static; local dev usually has no folder (API-only).
+_SERVE_SPA = (_ENV_DIR / "static").is_dir()
+
+
+def _cors_origin_regex() -> str:
+    """Local Vite dev (separate port). Same Fly host = same origin, no CORS. Override: CORS_ALLOW_ORIGIN_REGEX."""
+    custom = os.environ.get("CORS_ALLOW_ORIGIN_REGEX", "").strip()
+    if custom:
+        return custom
+    return r"^http://(localhost|127\.0\.0\.1):\d+$"
+
+
+app = FastAPI(
+    title="Smart Estates DSS",
+    docs_url="/api/docs" if _SERVE_SPA else "/docs",
+    redoc_url="/api/redoc" if _SERVE_SPA else "/redoc",
+    openapi_url="/api/openapi.json" if _SERVE_SPA else "/openapi.json",
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
+    allow_origin_regex=_cors_origin_regex(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -248,10 +265,17 @@ async def ai_insights(body: InsightsBody) -> dict[str, str]:
     return {"reply": reply.strip()}
 
 
+# SPA last so /api/* and /api/docs stay on FastAPI
+if _SERVE_SPA:
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=str(_ENV_DIR / "static"), html=True), name="spa")
+
+
 if __name__ == "__main__":
     import uvicorn
 
     port = int(os.environ.get("AI_API_PORT", "8765"))
-    print(f"Smart Estates AI API → http://127.0.0.1:{port}")
-    print("If you see 'address already in use', another copy is still running — close that terminal or change AI_API_PORT (and Vite proxy).")
+    print(f"Smart Estates AI API -> http://127.0.0.1:{port}")
+    print("If you see 'address already in use', another copy is still running - close that terminal or change AI_API_PORT (and Vite proxy).")
     uvicorn.run(app, host="127.0.0.1", port=port)
