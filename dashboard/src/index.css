@@ -638,16 +638,47 @@ body.nav-open-lock {
 }
 
 @media (max-width: 480px) {
+  .dashboard-grid {
+    gap: 1rem;
+  }
+
   .header h1 {
     font-size: 1.25rem;
   }
 
   .lease-card {
-    min-width: 160px;
+    min-width: min(78vw, 320px);
   }
 
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .card {
+    padding: 0.9rem;
+    border-radius: 12px;
+  }
+
+  .card-title {
+    text-align: left;
+  }
+
+  .lease-carousel {
+    gap: 0.75rem;
+    scroll-snap-type: x mandatory;
+  }
+
+  .lease-card {
+    scroll-snap-align: start;
+  }
+
+  .map-container {
+    height: 240px;
+  }
+
+  .chart-surface canvas {
+    max-width: 100% !important;
+    height: auto !important;
   }
 }
 
