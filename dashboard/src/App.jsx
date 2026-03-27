@@ -17,7 +17,7 @@ import {
     Sparkles,
 } from 'lucide-react';
 import data from './data/data.json';
-import { hasSupabaseConfig, supabase } from './lib/supabaseClient.js';
+import { getSupabase, hasSupabaseConfig } from './lib/supabaseClient.js';
 import {
     Chart as ChartJS,
     CategoryScale,
@@ -793,7 +793,9 @@ const App = ({ tuckshopsData = null }) => {
     };
 
     useEffect(() => {
-        if (!hasSupabaseConfig || !supabase) return;
+        if (!hasSupabaseConfig()) return;
+        const supabase = getSupabase();
+        if (!supabase) return;
         if (activeTab !== 'Payments') return;
         let cancelled = false;
 
@@ -830,7 +832,8 @@ const App = ({ tuckshopsData = null }) => {
         const resolved = resolveTuckshopFromReference(reference);
         const paymentType = paymentData.paymentType;
 
-        if (!hasSupabaseConfig || !supabase) {
+        const supabase = getSupabase();
+        if (!hasSupabaseConfig() || !supabase) {
             // Local fallback mode: we can generate a receipt, but cannot persist to the DB.
             if (!resolved) {
                 setPaymentError('No matching kiosk/tenant found in local data.');

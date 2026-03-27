@@ -217,6 +217,27 @@ def ai_status() -> dict[str, Any]:
     }
 
 
+@app.get("/api/config")
+def public_config() -> dict[str, Any]:
+    """
+    Public runtime config for the frontend bundle (Render sets env vars at runtime).
+    These are safe to expose because they are equivalent to client-side VITE_* values.
+    """
+    supabase_url = (
+        os.environ.get("VITE_SUPABASE_URL", "").strip()
+        or os.environ.get("SUPABASE_URL", "").strip()
+    )
+    supabase_anon = (
+        os.environ.get("VITE_SUPABASE_ANON_KEY", "").strip()
+        or os.environ.get("SUPABASE_ANON_KEY", "").strip()
+        or os.environ.get("SUPABASE_ANON_PUBLIC_KEY", "").strip()
+    )
+    return {
+        "supabaseUrl": supabase_url or None,
+        "supabaseAnonKey": supabase_anon or None,
+    }
+
+
 @app.post("/api/ai/insights")
 async def ai_insights(body: InsightsBody) -> dict[str, str]:
     configured, reason, hint = _openai_key_diagnosis()

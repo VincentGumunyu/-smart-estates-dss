@@ -1,8 +1,8 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
 import './index.css';
-import { hasSupabaseConfig, supabase } from './lib/supabaseClient.js';
+import { configureSupabase, getSupabase, hasSupabaseConfig } from './lib/supabaseClient.js';
 
 const toMoney = (v) => {
     if (v === null || v === undefined || v === '') return '';
@@ -37,6 +37,7 @@ function LoginPage() {
         e.preventDefault();
         setLoading(true);
         setError('');
+        const supabase = getSupabase();
         const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
         if (loginError) setError(loginError.message);
         setLoading(false);
@@ -64,14 +65,40 @@ function LoginPage() {
 function RootApp() {
     const [session, setSession] = useState(null);
     const [loadingSession, setLoadingSession] = useState(true);
+    const [supabaseReady, setSupabaseReady] = useState(false);
     const [rows, setRows] = useState([]);
     const [rowsError, setRowsError] = useState('');
 
     useEffect(() => {
-        if (!hasSupabaseConfig) {
+        let cancelled = false;
+        (async () => {
+            try {
+                // Render injects env vars at runtime; fetch public config from the API.
+                const res = await fetch('/api/config');
+                if (res.ok) {
+                    const cfg = await res.json();
+                    configureSupabase({
+                        supabaseUrl: cfg?.supabaseUrl || '',
+                        supabaseAnonKey: cfg?.supabaseAnonKey || '',
+                    });
+                }
+            } catch {
+                // ignore
+            } finally {
+                if (!cancelled) setSupabaseReady(true);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!supabaseReady || !hasSupabaseConfig()) {
             setLoadingSession(false);
             return;
         }
+        const supabase = getSupabase();
         supabase.auth.getSession().then(({ data }) => {
             setSession(data.session ?? null);
             setLoadingSession(false);
@@ -82,10 +109,11 @@ function RootApp() {
             setSession(nextSession ?? null);
         });
         return () => subscription.unsubscribe();
-    }, []);
+    }, [supabaseReady]);
 
     useEffect(() => {
-        if (!hasSupabaseConfig || !session) return;
+        if (!supabaseReady || !hasSupabaseConfig() || !session) return;
+        const supabase = getSupabase();
         (async () => {
             setRowsError('');
             const { data, error } = await supabase
@@ -99,10 +127,11 @@ function RootApp() {
             }
             setRows((data || []).map(mapDbRowToLegacy));
         })();
-    }, [session]);
+    }, [session, supabaseReady]);
 
     const topBar = useMemo(() => {
-        if (!hasSupabaseConfig || !session) return null;
+        if (!hasSupabaseConfig() || !session) return null;
+        const supabase = getSupabase();
         return (
             <div style={{ position: 'fixed', right: 12, top: 10, zIndex: 9999, display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ fontSize: 12, color: '#b4d0b4', background: 'rgba(0,0,0,0.35)', padding: '6px 10px', borderRadius: 8 }}>
@@ -119,7 +148,11 @@ function RootApp() {
         );
     }, [session]);
 
-    if (!hasSupabaseConfig) {
+    if (!supabaseReady) {
+        return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: '#cfcfcf' }}>Starting…</div>;
+    }
+
+    if (!hasSupabaseConfig()) {
         return (
             <>
                 <div style={{ position: 'fixed', left: 12, top: 10, zIndex: 9999, background: 'rgba(197,160,89,0.12)', border: '1px solid #c5a059', color: '#ffe6a7', padding: '8px 10px', borderRadius: 8, fontSize: 12 }}>

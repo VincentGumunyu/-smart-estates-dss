@@ -1,15 +1,45 @@
-﻿import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const envSupabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const envSupabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
+let runtimeConfig = {
+  supabaseUrl: envSupabaseUrl,
+  supabaseAnonKey: envSupabaseAnonKey,
+};
 
-export const supabase = hasSupabaseConfig
-  ? createClient(supabaseUrl, supabaseAnonKey, {
+let supabaseClient = null;
+
+export const hasSupabaseConfig = () =>
+  Boolean(runtimeConfig.supabaseUrl && runtimeConfig.supabaseAnonKey);
+
+export const configureSupabase = ({ supabaseUrl, supabaseAnonKey }) => {
+  runtimeConfig = {
+    supabaseUrl: supabaseUrl || '',
+    supabaseAnonKey: supabaseAnonKey || '',
+  };
+  if (hasSupabaseConfig()) {
+    supabaseClient = createClient(runtimeConfig.supabaseUrl, runtimeConfig.supabaseAnonKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
       },
-    })
-  : null;
+    });
+  } else {
+    supabaseClient = null;
+  }
+  return supabaseClient;
+};
+
+export const getSupabase = () => {
+  if (supabaseClient) return supabaseClient;
+  if (hasSupabaseConfig()) {
+    supabaseClient = createClient(runtimeConfig.supabaseUrl, runtimeConfig.supabaseAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+      },
+    });
+  }
+  return supabaseClient;
+};
