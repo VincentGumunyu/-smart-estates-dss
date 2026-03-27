@@ -1,0 +1,28 @@
+# Fly.io — run `fly launch` from this folder; change `app` to your app name if needed.
+app = "smart-estates-dss-api"
+primary_region = "jnb"
+
+[build]
+[build.args]
+  VITE_SUPABASE_URL = "https://gajakylvazhpzuwfhyjy.supabase.co"
+  VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdhamFreWx2YXpocHp1d2ZoeWp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1NTE5MzMsImV4cCI6MjA5MDEyNzkzM30.oEqFHIc9SgeqWIsEfHs_FDyr7wLZq2pv_w0SXRCp2mA"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[[http_service.checks]]
+  grace_period = "15s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/api/health"

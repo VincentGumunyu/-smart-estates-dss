@@ -1,0 +1,11 @@
+.git
+.env
+node_modules
+dashboard/node_modules
+dashboard/dist
+*.xlsx
+data.json
+data_summary.txt
+__pycache__
+*.pyc
+.DS_Store

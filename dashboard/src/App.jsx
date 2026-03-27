@@ -17,6 +17,7 @@ import {
     Sparkles,
 } from 'lucide-react';
 import data from './data/data.json';
+import { hasSupabaseConfig, supabase } from './lib/supabaseClient.js';
 import {
     Chart as ChartJS,
     CategoryScale,
@@ -60,6 +61,10 @@ ChartJS.register(
     Filler
 );
 
+/** Local dev: unset → Vite proxies /api. Production (Fly): unset → same-origin /api. Optional override: VITE_API_BASE_URL. */
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const apiUrl = (path) => `${API_BASE}${path}`;
+
 const GWERU_CENTER = [-19.46, 29.81];
 
 /** City-wide standard legal tuckshop monthly rent (USD) */
@@ -85,6 +90,15 @@ const parseArrearsUsd = (record) => {
     return null;
 };
 
+/** Parse numeric USD from mixed input strings ("$57.50", "57.50", 57.5) */
+const parseUsdNumber = (v) => {
+    if (v === null || v === undefined) return null;
+    const s = String(v).trim();
+    if (!s) return null;
+    const n = Number(s.replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(n) ? n : null;
+};
+
 const CHART_TOOLTIP_DEFAULTS = {
     backgroundColor: 'rgba(11, 34, 18, 0.96)',
     titleColor: '#ffd700',
@@ -108,7 +122,7 @@ const darkCartesianScales = {
     },
 };
 
-const App = () => {
+const App = ({ tuckshopsData = null }) => {
     const [activeTab, setActiveTab] = useState('Dashboard');
     const [leaseQuery, setLeaseQuery] = useState('');
     const [complianceQuery, setComplianceQuery] = useState('');
@@ -138,8 +152,42 @@ const App = () => {
         tenantName: ''
     });
 
+    const [localTuckshops, setLocalTuckshops] = useState(null);
+    const [paymentBusy, setPaymentBusy] = useState(false);
+    const [paymentError, setPaymentError] = useState('');
+    const [paymentReceipt, setPaymentReceipt] = useState(null);
+    const [paymentHistory, setPaymentHistory] = useState([]);
+    const [paymentHistoryLoading, setPaymentHistoryLoading] = useState(false);
+
     // Logic to process data
-    const tuckshops = useMemo(() => data.tuckshops || [], []);
+    const tuckshops = useMemo(() => {
+        if (Array.isArray(localTuckshops) && localTuckshops.length) return localTuckshops;
+        if (Array.isArray(tuckshopsData) && tuckshopsData.length) return tuckshopsData;
+        return data.tuckshops || [];
+    }, [tuckshopsData, localTuckshops]);
+
+    useEffect(() => {
+        setLocalTuckshops(null);
+    }, [tuckshopsData]);
+
+    const paymentSuggestionStrings = useMemo(() => {
+        const set = new Set();
+        for (const t of tuckshops) {
+            const kiosk = t['KIOSK NUMBER '];
+            const name = t['NAME OF LESSEEE'];
+
+            if (kiosk !== null && kiosk !== undefined && String(kiosk).trim()) {
+                set.add(String(kiosk).trim());
+            }
+            if (name !== null && name !== undefined && String(name).trim()) {
+                set.add(String(name).trim());
+            }
+            if (kiosk !== null && kiosk !== undefined && String(kiosk).trim() && name !== null && name !== undefined && String(name).trim()) {
+                set.add(`${String(kiosk).trim()} - ${String(name).trim()}`);
+            }
+        }
+        return Array.from(set).slice(0, 250);
+    }, [tuckshops]);
 
     const stats = useMemo(() => {
         const total = tuckshops.length;
@@ -606,7 +654,7 @@ const App = () => {
         setAiLoading(true);
         setAiError('');
         try {
-            const res = await fetch('/api/ai/insights', {
+            const res = await fetch(apiUrl('/api/ai/insights'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -641,8 +689,285 @@ const App = () => {
         }
     };
 
-    const handleAddPayment = () => {
-        alert(`Payment of $${paymentData.amount} recorded for Kiosk ${paymentData.kioskId}`);
+    const normalizeInputText = (s) =>
+        String(s || '')
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9\s-]/gi, ' ')
+            .replace(/\s+/g, ' ');
+
+    const resolveTuckshopFromReference = (reference) => {
+        const ref = String(reference || '').trim();
+        if (!ref) return null;
+
+        // 1) Try kiosk number (digits) match first.
+        const kioskDigits = ref.match(/\d+/);
+        if (kioskDigits && kioskDigits[0]) {
+            const kioskNumberFromRef = parseInt(kioskDigits[0], 10);
+            if (Number.isFinite(kioskNumberFromRef)) {
+                const direct = tuckshops.find((t) => Number(t['KIOSK NUMBER '] ?? NaN) === kioskNumberFromRef);
+                if (direct) return direct;
+            }
+        }
+
+        // 2) Try lessee/tenant name match (exact normalized, then partial).
+        const nameCandidate = ref.replace(/^\s*\d+\s*[-:]\s*/g, '').trim();
+        const norm = normalizeInputText(nameCandidate || ref);
+        if (!norm) return null;
+
+        const exact = tuckshops.find((t) => normalizeInputText(t['NAME OF LESSEEE']) === norm);
+        if (exact) return exact;
+
+        const partial = tuckshops.find((t) => normalizeInputText(t['NAME OF LESSEEE']).includes(norm));
+        return partial || null;
+    };
+
+    const buildReceiptHtml = (r) => {
+        const refShort = String(r.id || '').slice(0, 8) || '—';
+        const amount = Number(r.amount_usd);
+        const amountText = Number.isFinite(amount) ? `$${amount.toFixed(2)}` : '—';
+        const kioskText = r.kiosk_number ?? '—';
+        const tenantText = r.lessee_name ?? '—';
+        const paymentType = r.payment_type ?? '—';
+        const paymentDate = r.payment_date ?? '—';
+
+        return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Digital Receipt</title>
+    <style>
+      body { font-family: Arial, sans-serif; color: #0b2212; padding: 28px; }
+      .box { border: 2px solid #c5a059; border-radius: 10px; padding: 18px 16px; }
+      .title { font-size: 18px; font-weight: 800; margin-bottom: 8px; }
+      .muted { color: #4b5f55; font-size: 12px; }
+      .row { display: flex; justify-content: space-between; gap: 16px; margin: 10px 0; }
+      .label { font-size: 13px; color: #4b5f55; }
+      .value { font-size: 13px; font-weight: 700; text-align: right; }
+      .footer { margin-top: 18px; font-size: 12px; color: #4b5f55; }
+      @media print { body { padding: 0.5in; } }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <div class="title">Smart Estates - Digital Receipt</div>
+      <div class="muted">Official city council transaction record</div>
+      <div class="row"><div class="label">Receipt Ref</div><div class="value">#${refShort}</div></div>
+      <div class="row"><div class="label">Tenant</div><div class="value">${String(tenantText).replace(/</g, '&lt;')}</div></div>
+      <div class="row"><div class="label">Kiosk ID</div><div class="value">${String(kioskText)}</div></div>
+      <div class="row"><div class="label">Payment Type</div><div class="value">${String(paymentType).replace(/</g, '&lt;')}</div></div>
+      <div class="row"><div class="label">Date Received</div><div class="value">${String(paymentDate)}</div></div>
+      <div class="row"><div class="label">Amount (USD)</div><div class="value">${amountText}</div></div>
+      <div class="footer">Generated by Smart Estates DSS. Please keep for your records.</div>
+    </div>
+  </body>
+</html>`;
+    };
+
+    const downloadPaymentReceiptHtml = (receipt) => {
+        const html = buildReceiptHtml(receipt);
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Receipt-${String(receipt.id || '').slice(0, 8) || 'payment'}.html`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    };
+
+    const printPaymentReceiptHtml = (receipt) => {
+        const html = buildReceiptHtml(receipt);
+        const w = window.open('', '_blank', 'width=900,height=700');
+        if (!w) {
+            alert('Popup blocked. Please allow popups to print the receipt.');
+            return;
+        }
+        w.document.open();
+        w.document.write(html);
+        w.document.close();
+        w.focus();
+        w.print();
+    };
+
+    useEffect(() => {
+        if (!hasSupabaseConfig || !supabase) return;
+        if (activeTab !== 'Payments') return;
+        let cancelled = false;
+
+        (async () => {
+            setPaymentHistoryLoading(true);
+            try {
+                const { data, error } = await supabase
+                    .from('payments')
+                    .select('id,kiosk_number,lessee_name,payment_type,payment_date,amount_usd,created_at')
+                    .order('created_at', { ascending: false })
+                    .limit(10);
+
+                if (error) throw error;
+                if (!cancelled) setPaymentHistory(data || []);
+            } catch (e) {
+                if (!cancelled) setPaymentHistory([]);
+            } finally {
+                if (!cancelled) setPaymentHistoryLoading(false);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [activeTab]);
+
+    const handleAddPayment = async () => {
+        setPaymentError('');
+        setPaymentReceipt(null);
+
+        const amountUsd = parseUsdNumber(paymentData.amount);
+        const dateReceived = paymentData.date || new Date().toISOString().slice(0, 10);
+        const reference = paymentData.kioskId;
+        const resolved = resolveTuckshopFromReference(reference);
+        const paymentType = paymentData.paymentType;
+
+        if (!hasSupabaseConfig || !supabase) {
+            // Local fallback mode: we can generate a receipt, but cannot persist to the DB.
+            if (!resolved) {
+                setPaymentError('No matching kiosk/tenant found in local data.');
+                return;
+            }
+            if (!amountUsd || amountUsd <= 0) {
+                setPaymentError('Enter a valid amount (USD).');
+                return;
+            }
+            const localReceipt = {
+                id: `local-${Date.now()}`,
+                kiosk_number: resolved['KIOSK NUMBER '],
+                lessee_name: resolved['NAME OF LESSEEE'],
+                payment_type: paymentType,
+                payment_date: dateReceived,
+                amount_usd: amountUsd,
+            };
+            setPaymentReceipt(localReceipt);
+            return;
+        }
+
+        if (!resolved) {
+            setPaymentError('No matching kiosk/tenant found. Try selecting a suggestion.');
+            return;
+        }
+        if (!amountUsd || amountUsd <= 0) {
+            setPaymentError('Enter a valid amount (USD).');
+            return;
+        }
+
+        const kioskNumber = Number(resolved['KIOSK NUMBER ']);
+        const lesseeName = String(resolved['NAME OF LESSEEE'] || '');
+        if (!Number.isFinite(kioskNumber)) {
+            setPaymentError('Kiosk number could not be resolved.');
+            return;
+        }
+
+        setPaymentBusy(true);
+        try {
+            const { data: insertedPayment, error: insertErr } = await supabase
+                .from('payments')
+                .insert({
+                    kiosk_number: kioskNumber,
+                    lessee_name: lesseeName,
+                    payment_type: paymentType,
+                    payment_date: dateReceived,
+                    amount_usd: amountUsd,
+                })
+                .select('id,kiosk_number,lessee_name,payment_type,payment_date,amount_usd,created_at')
+                .single();
+
+            if (insertErr) throw insertErr;
+
+            const updateFields = {
+                payment_date: dateReceived,
+                amount_paid: amountUsd,
+            };
+
+            if (String(paymentType).toLowerCase().includes('arrears')) {
+                const oldArrears = parseArrearsUsd(resolved) ?? 0;
+                const newArrears = Math.max(0, oldArrears - amountUsd);
+                updateFields.arrears_usd = newArrears;
+            }
+
+            const { error: updateErr } = await supabase
+                .from('tuckshops')
+                .update(updateFields)
+                .eq('kiosk_number', kioskNumber);
+
+            if (updateErr) throw updateErr;
+
+            setLocalTuckshops((prev) => {
+                const base = Array.isArray(prev)
+                    ? prev
+                    : Array.isArray(tuckshopsData) && tuckshopsData.length
+                      ? tuckshopsData
+                      : data.tuckshops || [];
+
+                return base.map((t) => {
+                    const tKiosk = Number(t['KIOSK NUMBER '] ?? NaN);
+                    if (!Number.isFinite(tKiosk) || tKiosk !== kioskNumber) return t;
+
+                    const next = {
+                        ...t,
+                        payment_date: dateReceived,
+                        amount_paid: amountUsd,
+                    };
+
+                    if (String(paymentType).toLowerCase().includes('arrears')) {
+                        const oldA = parseArrearsUsd(t) ?? 0;
+                        const newA = Math.max(0, oldA - amountUsd);
+                        next['arrears_usd'] = newA;
+                        next['Arrears'] = `$${newA.toFixed(2)}`;
+                    }
+
+                    return next;
+                });
+            });
+
+            const receipt = insertedPayment || {
+                id: `local-${Date.now()}`,
+                kiosk_number: kioskNumber,
+                lessee_name: lesseeName,
+                payment_type: paymentType,
+                payment_date: dateReceived,
+                amount_usd: amountUsd,
+            };
+
+            setPaymentReceipt({
+                ...receipt,
+                kiosk_number: kioskNumber,
+                lessee_name: lesseeName,
+                payment_date: dateReceived,
+                amount_usd: amountUsd,
+            });
+
+            setPaymentHistory((prev) => {
+                const next = [
+                    {
+                        id: receipt.id,
+                        kiosk_number: kioskNumber,
+                        lessee_name: lesseeName,
+                        payment_type: paymentType,
+                        payment_date: dateReceived,
+                        amount_usd: amountUsd,
+                        created_at: receipt.created_at || new Date().toISOString(),
+                    },
+                    ...(Array.isArray(prev) ? prev : []),
+                ];
+                return next.slice(0, 10);
+            });
+        } catch (e) {
+            setPaymentError(e?.message || String(e));
+            setPaymentReceipt(null);
+        } finally {
+            setPaymentBusy(false);
+        }
     };
 
     useEffect(() => {
@@ -678,7 +1003,7 @@ const App = () => {
         setAiApiStatus(null);
         (async () => {
             try {
-                const res = await fetch('/api/ai/status');
+                const res = await fetch(apiUrl('/api/ai/status'));
                 if (!res.ok) throw new Error('bad status');
                 const j = await res.json();
                 if (!cancelled) setAiApiStatus({ ...j, unreachable: false });
@@ -904,13 +1229,20 @@ const App = () => {
                                 <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>Issue official city council digital receipts for rent and arrears.</p>
                                 <form onSubmit={(e) => { e.preventDefault(); handleAddPayment(); }}>
                                     <div className="form-group">
-                                        <label>Kiosk ID / Reference</label>
+                                        <label>Kiosk ID / Tenant name</label>
                                         <input
                                             type="text"
-                                            placeholder="e.g. K-1002"
+                                            placeholder="e.g. 12 - Agnes Mateta"
+                                            list="payment-target-suggestions"
+                                            autoComplete="off"
                                             value={paymentData.kioskId}
                                             onChange={(e) => setPaymentData({ ...paymentData, kioskId: e.target.value })}
                                         />
+                                        <datalist id="payment-target-suggestions">
+                                            {paymentSuggestionStrings.map((v) => (
+                                                <option key={v} value={v} />
+                                            ))}
+                                        </datalist>
                                     </div>
                                     <div className="form-group">
                                         <label>Payment Source</label>
@@ -931,8 +1263,50 @@ const App = () => {
                                         <label>Amount (USD)</label>
                                         <input type="number" value={paymentData.amount} onChange={(e) => setPaymentData({ ...paymentData, amount: e.target.value })} />
                                     </div>
-                                    <button type="submit" className="btn-primary">Process Digital Receipt</button>
+                                    <button type="submit" className="btn-primary" disabled={paymentBusy}>
+                                        {paymentBusy ? 'Processing…' : 'Process Digital Receipt'}
+                                    </button>
+
+                                    {paymentError && (
+                                        <div style={{ marginTop: '0.75rem', color: '#ffb4b4', fontSize: '0.9rem' }}>
+                                            {paymentError}
+                                        </div>
+                                    )}
                                 </form>
+
+                                {paymentReceipt && (
+                                    <div
+                                        style={{
+                                            marginTop: '1rem',
+                                            border: '1px solid rgba(197,160,89,0.55)',
+                                            background: 'rgba(197,160,89,0.08)',
+                                            borderRadius: 10,
+                                            padding: '0.9rem 1rem',
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+                                            <div>
+                                                <div style={{ fontWeight: 800, color: '#c5a059' }}>Receipt ready</div>
+                                                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                                                    Ref #{String(paymentReceipt.id || '').slice(0, 8) || '—'} • {paymentReceipt.lessee_name || '—'}
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                <button
+                                                    type="button"
+                                                    className="btn-primary"
+                                                    style={{ background: '#0b2212' }}
+                                                    onClick={() => downloadPaymentReceiptHtml(paymentReceipt)}
+                                                >
+                                                    Download
+                                                </button>
+                                                <button type="button" className="btn-primary" onClick={() => printPaymentReceiptHtml(paymentReceipt)}>
+                                                    Print
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="card">
@@ -949,15 +1323,33 @@ const App = () => {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {tuckshops.slice(50, 65).map((t, i) => (
-                                                <tr key={i}>
-                                                    <td>#{1024 + i}</td>
-                                                    <td>{t['NAME OF LESSEEE']}</td>
-                                                    <td>Monthly Rent</td>
-                                                    <td>{formatStandardMonthlyRental()}</td>
-                                                    <td><span className="status-valid">SETTLED</span></td>
+                                            {paymentHistoryLoading ? (
+                                                <tr>
+                                                    <td colSpan="5" style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>
+                                                        Loading payment history…
+                                                    </td>
                                                 </tr>
-                                            ))}
+                                            ) : paymentHistory.length ? (
+                                                paymentHistory.map((p) => {
+                                                    const amt = Number(p.amount_usd);
+                                                    const amtText = Number.isFinite(amt) ? `$${amt.toFixed(2)}` : '—';
+                                                    return (
+                                                        <tr key={p.id}>
+                                                            <td>#{String(p.id || '').slice(0, 8) || '—'}</td>
+                                                            <td>{p.lessee_name}</td>
+                                                            <td>{p.payment_type}</td>
+                                                            <td>{amtText}</td>
+                                                            <td><span className="status-valid">RECEIPTED</span></td>
+                                                        </tr>
+                                                    );
+                                                })
+                                            ) : (
+                                                <tr>
+                                                    <td colSpan="5" style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>
+                                                        No payments recorded yet.
+                                                    </td>
+                                                </tr>
+                                            )}
                                         </tbody>
                                     </table>
                                 </div>
